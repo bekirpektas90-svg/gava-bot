@@ -593,19 +593,33 @@ async def handle_pdf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         invoice.get("total",0),
         items
     )
-    lines = [
-        f"✅ *Invoice #{invoice.get('invoice_no')} kaydedildi!*\n"
-        f"📦 {invoice.get('supplier')} · {invoice.get('date')}\n"
-        f"💰 Toplam: ${invoice.get('total','?')}\n"
-        f"📋 {len(items)} ürün bulundu:\n"
-    ]
-    for it in items[:15]:
-        lines.append(f"  `{it.get('sku','')}` {it.get('description','')} — {it.get('qty','')} adet")
-    if len(items) > 15:
-        lines.append(f"  _...ve {len(items)-15} ürün daha_")
-    lines.append("\n📦 Şimdi ürünleri teslim almak için 'Ürün Teslim Al' menüsünü kullanın.")
+    # İlk mesaj: özet
+    supplier = invoice.get('supplier','')
+    inv_date = invoice.get('date','')
+    inv_total = invoice.get('total','?')
+    inv_no = invoice.get('invoice_no','?')
     await update.message.reply_text(
-        "\n".join(lines),
+        f"✅ *Invoice #{inv_no} kaydedildi!*\n"
+        f"📦 {supplier} · {inv_date}\n"
+        f"💰 Toplam: ${inv_total}\n"
+        f"📋 *{len(items)} ürün* bulundu:",
+        parse_mode="Markdown"
+    )
+    # Ürünleri 20'şer gönder
+    chunk_size = 20
+    for i in range(0, len(items), chunk_size):
+        chunk = items[i:i+chunk_size]
+        end = min(i+chunk_size, len(items))
+        lines = [f"📋 *{i+1}–{end} / {len(items)}:*\n"]
+        for it in chunk:
+            sku = str(it.get('sku',''))
+            desc = str(it.get('description',''))
+            qty = str(it.get('qty',''))
+            price = str(it.get('unit_price',''))
+            lines.append(f"`{sku}` {desc} — {qty} adet @ ${price}")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text(
+        "📦 Ürünleri teslim almak için *Ürün Teslim Al* butonunu kullanın.",
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard()
     )
