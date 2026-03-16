@@ -288,6 +288,7 @@ def main_menu_keyboard():
          InlineKeyboardButton("🗂 Envanter", callback_data="menu_inventory")],
         [InlineKeyboardButton("📤 Shopify CSV", callback_data="menu_shopify"),
          InlineKeyboardButton("📤 Square CSV", callback_data="menu_square")],
+        [InlineKeyboardButton("🗑 Envanteri Sıfırla", callback_data="menu_reset_inventory")],
     ])
 
 def back_keyboard():
@@ -669,6 +670,27 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if claude_name:
                 p = dict(p)
                 p['name'] = claude_name
+            # Check qty mismatch with invoice
+            total_delivered = sum(v['qty'] for v in variants)
+            warning = ""
+            if HAS_DB and DATABASE_URL:
+                conn_check = get_db()
+                if conn_check:
+                    with conn_check.cursor() as cur:
+                        cur.execute("""
+                            SELECT i.qty as invoice_qty FROM invoices inv
+                            JOIN LATERAL jsonb_array_elements(inv.items) AS i ON true
+                            WHERE i->>'sku' = %s
+                            ORDER BY inv.created_at DESC LIMIT 1
+                        """, (sku,))
+                        inv_row = cur.fetchone()
+                    conn_check.close()
+                    if inv_row:
+                        invoice_qty = int(inv_row['invoice_qty'])
+                        if total_delivered != invoice_qty:
+                            diff = total_delivered - invoice_qty
+                            sign = "+" if diff > 0 else ""
+                            warning = f"\n⚠️ *Fark:* Invoice {invoice_qty} adet, girilen {total_delivered} adet ({sign}{diff})"
             if HAS_DB and DATABASE_URL:
                 db_save_variants_named(None, sku, variants, retail, p['name'])
             else:
@@ -691,7 +713,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             lines = [f"✅ *{p['name']}* `{sku}` — ${retail}"]
             for color, sizes in colors.items():
                 lines.append(f"  🎨 {color}: {' '.join(sizes)}")
-            lines.append(f"  📦 {total_qty} adet, {len(variants)} variant")
+            lines.append(f"  📦 {total_qty} adet, {len(variants)} variant{warning}")
             reply_lines.append("\n".join(lines))
 
         if reply_lines:
@@ -708,6 +730,37 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "Ana menüden bir işlem seçin:",
             reply_markup=main_menu_keyboard()
         )
+
+async def menu_reset_inventory(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    rows = db_get_inventory()
+    count = len(rows)
+    total_qty = sum(r['qty'] for r in rows) if rows else 0
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🗑 Evet, sıfırla", callback_data="confirm_reset_inventory"),
+        InlineKeyboardButton("İptal", callback_data="menu_main")
+    ]])
+    await query.edit_message_text(
+        "Envanter Sifirla\n\nSu an: " + str(count) + " variant, " + str(total_qty) + " adet\nTumü silinecek, invoiceler korunur.\nEmin misiniz?",
+        reply_markup=keyboard
+    )
+
+async def confirm_reset_inventory(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    conn = get_db()
+    if conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM inventory")
+        conn.close()
+    else:
+        mem_sessions.clear()
+    await query.edit_message_text(
+        "Envanter sifirlandi! Invoiceler korundu.",
+        reply_markup=main_menu_keyboard()
+    )
 
 async def invoice_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -776,6 +829,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await invoice_delete(update, ctx)
     elif data.startswith("inv_confirm_delete_"):
         await invoice_confirm_delete(update, ctx)
+    elif data == "menu_reset_inventory":
+        await menu_reset_inventory(update, ctx)
+    elif data == "confirm_reset_inventory":
+        await confirm_reset_inventory(update, ctx)
 
 async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     inv_count = len(db_get_invoices()) if HAS_DB and DATABASE_URL else 0
