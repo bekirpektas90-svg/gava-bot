@@ -15,28 +15,42 @@ except ImportError:
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 GOOGLE_DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
 GOOGLE_SERVICE_ACCOUNT = os.environ.get("GOOGLE_SERVICE_ACCOUNT", "")
+IMGUR_CLIENT_ID = os.environ.get("IMGUR_CLIENT_ID", "")
+
+def upload_image(filename, file_bytes):
+    import hashlib, time
+    if CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
+        try:
+            import base64 as _b64
+            timestamp = str(int(time.time()))
+            public_id = filename.rsplit(".", 1)[0]
+            sign_str = "public_id=" + public_id + "&timestamp=" + timestamp + CLOUDINARY_API_SECRET
+            signature = hashlib.sha256(sign_str.encode()).hexdigest()
+            # base64 encoded upload (simpler than multipart)
+            img_b64 = "data:image/jpeg;base64," + _b64.b64encode(file_bytes).decode()
+            data = urllib.parse.urlencode({
+                "file": img_b64,
+                "api_key": CLOUDINARY_API_KEY,
+                "timestamp": timestamp,
+                "public_id": public_id,
+                "signature": signature,
+            }).encode()
+            upload_url = "https://api.cloudinary.com/v1_1/" + CLOUDINARY_CLOUD_NAME + "/image/upload"
+            req = urllib.request.Request(upload_url, data=data)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read())
+            url = result.get("secure_url")
+            if url:
+                print("Cloudinary OK: " + url)
+                return url
+            print("Cloudinary no URL:", result)
+        except Exception as e:
+            print("Cloudinary error: " + str(e))
+    return None
+
 
 def upload_to_drive(filename, file_bytes, mime_type="image/jpeg"):
-    if not GOOGLE_SERVICE_ACCOUNT or not GOOGLE_DRIVE_FOLDER_ID:
-        return None
-    try:
-        import json as _json
-        from google.oauth2 import service_account
-        from googleapiclient.discovery import build
-        from googleapiclient.http import MediaIoBaseUpload
-        creds_info = _json.loads(GOOGLE_SERVICE_ACCOUNT)
-        creds = service_account.Credentials.from_service_account_info(
-            creds_info, scopes=["https://www.googleapis.com/auth/drive"])
-        service = build("drive", "v3", credentials=creds)
-        meta = {"name": filename, "parents": [GOOGLE_DRIVE_FOLDER_ID]}
-        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type)
-        f = service.files().create(body=meta, media_body=media, fields="id").execute()
-        file_id = f.get("id")
-        service.permissions().create(fileId=file_id, body={"type": "anyone", "role": "reader"}).execute()
-        return f"https://drive.google.com/uc?export=view&id={file_id}"
-    except Exception as e:
-        print(f"Drive error: {e}")
-        return None
+    return upload_image(filename, file_bytes)
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -522,7 +536,7 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     file = await ctx.bot.get_file(photo[-1].file_id)
     file_bytes = bytes(await file.download_as_bytearray())
     filename = f"{sku}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-    url = upload_to_drive(filename, file_bytes)
+    url = upload_image(filename, file_bytes)
     if not url:
         await update.message.reply_text("Drive yuklemesi basarisiz. Variables kontrol edin.", reply_markup=main_menu_keyboard())
         return
