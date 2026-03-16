@@ -282,13 +282,13 @@ SADECE JSON döndür:
 
 def main_menu_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📄 Invoice Yükle", callback_data="menu_invoice"),
-         InlineKeyboardButton("📦 Ürün Teslim Al", callback_data="menu_delivery")],
-        [InlineKeyboardButton("📋 Invoice Listesi", callback_data="menu_invoices"),
+        [InlineKeyboardButton("📄 Invoice Yukle", callback_data="menu_invoice"),
+         InlineKeyboardButton("📦 Urun Teslim Al", callback_data="menu_delivery")],
+        [InlineKeyboardButton("📸 Fotograf Ekle", callback_data="menu_photo"),
          InlineKeyboardButton("🗂 Envanter", callback_data="menu_inventory")],
-        [InlineKeyboardButton("📤 Shopify CSV", callback_data="menu_shopify"),
-         InlineKeyboardButton("📤 Square CSV", callback_data="menu_square")],
-        [InlineKeyboardButton("🗑 Envanteri Sıfırla", callback_data="menu_reset_inventory")],
+        [InlineKeyboardButton("📋 Invoice Listesi", callback_data="menu_invoices"),
+         InlineKeyboardButton("📤 CSV Indir", callback_data="menu_csv")],
+        [InlineKeyboardButton("🗑 Envanteri Sifirla", callback_data="menu_reset_inventory")],
     ])
 
 def back_keyboard():
@@ -477,7 +477,7 @@ async def export_csv(update: Update, ctx: ContextTypes.DEFAULT_TYPE, platform: s
         caption=caption
     )
     await query.edit_message_text(
-        f"{'Shopify' if platform=='shopify' else 'Square'} CSV gönderildi ✅",
+        "Fotograf Ekle\n\nUrun fotografini gonderin.\nCaption olarak SKU yazin.\nOrnek: 1308",
         reply_markup=back_keyboard()
     )
 
