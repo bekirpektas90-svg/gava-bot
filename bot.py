@@ -13,6 +13,30 @@ except ImportError:
     HAS_DB = False
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+GOOGLE_DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
+GOOGLE_SERVICE_ACCOUNT = os.environ.get("GOOGLE_SERVICE_ACCOUNT", "")
+
+def upload_to_drive(filename, file_bytes, mime_type="image/jpeg"):
+    if not GOOGLE_SERVICE_ACCOUNT or not GOOGLE_DRIVE_FOLDER_ID:
+        return None
+    try:
+        import json as _json
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseUpload
+        creds_info = _json.loads(GOOGLE_SERVICE_ACCOUNT)
+        creds = service_account.Credentials.from_service_account_info(
+            creds_info, scopes=["https://www.googleapis.com/auth/drive"])
+        service = build("drive", "v3", credentials=creds)
+        meta = {"name": filename, "parents": [GOOGLE_DRIVE_FOLDER_ID]}
+        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type)
+        f = service.files().create(body=meta, media_body=media, fields="id").execute()
+        file_id = f.get("id")
+        service.permissions().create(fileId=file_id, body={"type": "anyone", "role": "reader"}).execute()
+        return f"https://drive.google.com/uc?export=view&id={file_id}"
+    except Exception as e:
+        print(f"Drive error: {e}")
+        return None
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -455,6 +479,68 @@ async def menu_inventory(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+
+async def menu_csv(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "Hangi platform icin CSV?",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("Shopify CSV", callback_data="menu_shopify"),
+             InlineKeyboardButton("Square CSV", callback_data="menu_square")],
+            [InlineKeyboardButton("Ana Menu", callback_data="menu_main")]
+        ])
+    )
+
+async def menu_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "Fotograf Ekle\n\nUrun fotografini gonderin, caption olarak SKU yazin.\nOrnek caption: 1308",
+        reply_markup=back_keyboard()
+    )
+    ctx.user_data['mode'] = 'photo'
+
+async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    photo = update.message.photo
+    if not photo:
+        return
+    caption = (update.message.caption or "").strip().upper()
+    if not caption:
+        await update.message.reply_text("Caption olarak SKU yazin! Ornek: 1308", reply_markup=main_menu_keyboard())
+        return
+    sku = caption.split()[0]
+    if sku not in PRODUCTS:
+        matches = [k for k in PRODUCTS if k.startswith(sku)]
+        if len(matches) == 1:
+            sku = matches[0]
+        else:
+            await update.message.reply_text(f"SKU bulunamadi: {sku}", reply_markup=main_menu_keyboard())
+            return
+    p = PRODUCTS[sku]
+    await update.message.reply_text(f"Yukleniyor: {sku} - {p['name']}...")
+    file = await ctx.bot.get_file(photo[-1].file_id)
+    file_bytes = bytes(await file.download_as_bytearray())
+    filename = f"{sku}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+    url = upload_to_drive(filename, file_bytes)
+    if not url:
+        await update.message.reply_text("Drive yuklemesi basarisiz. Variables kontrol edin.", reply_markup=main_menu_keyboard())
+        return
+    conn = get_db()
+    if conn:
+        with conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS image_url TEXT")
+                except Exception:
+                    pass
+                cur.execute("UPDATE inventory SET image_url=%s WHERE sku=%s", (url, sku))
+        conn.close()
+    await update.message.reply_text(
+        f"Fotograf yuklendi!\nSKU: {sku}\nURL: {url}\n\nShopify CSV indirince Image Src dolu gelecek.",
+        reply_markup=main_menu_keyboard()
+    )
+
 async def export_csv(update: Update, ctx: ContextTypes.DEFAULT_TYPE, platform: str):
     query = update.callback_query
     await query.answer()
@@ -830,6 +916,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await invoice_delete(update, ctx)
     elif data.startswith("inv_confirm_delete_"):
         await invoice_confirm_delete(update, ctx)
+    elif data == "menu_photo":
+        await menu_photo(update, ctx)
+    elif data == "menu_csv":
+        await menu_csv(update, ctx)
     elif data == "menu_reset_inventory":
         await menu_reset_inventory(update, ctx)
     elif data == "confirm_reset_inventory":
