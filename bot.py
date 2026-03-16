@@ -222,6 +222,13 @@ def call_claude(prompt, system_prompt):
         data = json.loads(resp.read())
     raw = data["content"][0]["text"].strip()
     raw = raw.replace("```json","").replace("```","").strip()
+    raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', "", raw)
+    if raw.startswith("["):
+        end = raw.rfind("]")
+        if end != -1: raw = raw[:end+1]
+    elif raw.startswith("{"):
+        end = raw.rfind("}")
+        if end != -1: raw = raw[:end+1]
     return raw
 
 def parse_invoice_with_claude(pdf_text):
@@ -540,10 +547,43 @@ async def handle_pdf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             data = json.loads(resp.read())
-        raw = data["content"][0]["text"].strip().replace("```json","").replace("```","").strip()
+        raw = data["content"][0]["text"].strip()
+        # Robust JSON extraction - find the JSON object boundaries
+        raw = raw.replace("```json","").replace("```","").strip()
+        # Find first { and last } to extract valid JSON
+        start = raw.find('{')
+        end = raw.rfind('}')
+        if start != -1 and end != -1:
+            raw = raw[start:end+1]
+        # Fix common issues: remove control characters, fix newlines in strings
+        raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', raw)
         invoice = json.loads(raw)
+    except json.JSONDecodeError as e:
+        # Fallback: ask Claude to fix the JSON
+        try:
+            fix_payload = json.dumps({
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 2000,
+                "messages": [{"role": "user", "content": f"Bu JSON'u düzelt, SADECE geçerli JSON döndür:\n{raw[:3000]}"}]
+            }).encode()
+            fix_req = urllib.request.Request(
+                "https://api.anthropic.com/v1/messages",
+                data=fix_payload,
+                headers={"Content-Type":"application/json","x-api-key":CLAUDE_API_KEY,"anthropic-version":"2023-06-01"}
+            )
+            with urllib.request.urlopen(fix_req, timeout=30) as resp2:
+                data2 = json.loads(resp2.read())
+            raw2 = data2["content"][0]["text"].strip().replace("```json","").replace("```","").strip()
+            start = raw2.find('{')
+            end = raw2.rfind('}')
+            if start != -1 and end != -1:
+                raw2 = raw2[start:end+1]
+            invoice = json.loads(raw2)
+        except Exception as e2:
+            await update.message.reply_text(f"❌ PDF okunamadı: {e2}\n\nPDF'i tekrar göndermeyi deneyin.")
+            return
     except Exception as e:
-        await update.message.reply_text(f"❌ PDF okunamadı: {e}")
+        await update.message.reply_text(f"❌ Hata: {e}")
         return
     items = invoice.get("items", [])
     inv_id = db_save_invoice(
