@@ -848,9 +848,9 @@ async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 def main():
     if HAS_DB and DATABASE_URL:
         init_db()
-        print("✅ Veritabanı başlatıldı")
+        print("Veritabani baslatildi")
     else:
-        print("⚠️ Veritabanı yok, geçici hafıza kullanılıyor")
+        print("Veritabani yok, gecici hafiza")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("menu", cmd_menu))
@@ -858,27 +858,21 @@ def main():
     app.add_handler(CommandHandler("square", lambda u,c: export_csv_cmd(u,c,"square")))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    print("🤖 Bot başlatıldı...")
-    app.run_polling()
-
-async def export_csv_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE, platform: str):
-    sess = db_get_inventory_as_session() if HAS_DB and DATABASE_URL else mem_sessions.get(update.effective_chat.id, {})
-    if not sess:
-        await update.message.reply_text("Henüz ürün girilmedi.")
-        return
-    total_v = sum(len(e["variants"]) for e in sess.values())
-    if platform == "shopify":
-        csv_bytes = build_shopify_csv(sess)
-        fname = f"gava_shopify_{datetime.now().strftime('%Y%m%d')}.csv"
-        caption = f"✅ Shopify CSV — {len(sess)} ürün, {total_v} variant"
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+    PORT = int(os.environ.get("PORT", 8443))
+    if WEBHOOK_URL:
+        print(f"Webhook modu: {WEBHOOK_URL}")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_url=WEBHOOK_URL,
+            drop_pending_updates=True,
+        )
     else:
-        csv_bytes = build_square_csv(sess)
-        fname = f"gava_square_{datetime.now().strftime('%Y%m%d')}.csv"
-        caption = f"✅ Square CSV — {len(sess)} ürün, {total_v} variant"
-    await update.message.reply_document(
-        document=io.BytesIO(csv_bytes), filename=fname, caption=caption
-    )
+        print("Polling modu")
+        app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
