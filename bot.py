@@ -205,7 +205,7 @@ def get_session(cid):
 def call_claude(prompt, system_prompt):
     payload = json.dumps({
         "model": "claude-sonnet-4-20250514",
-        "max_tokens": 2000,
+        "max_tokens": 4000,
         "system": system_prompt,
         "messages": [{"role": "user", "content": prompt}]
     }).encode()
@@ -521,12 +521,12 @@ async def handle_pdf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     pdf_b64 = base64.b64encode(bytes(file_bytes)).decode()
     payload = json.dumps({
         "model": "claude-sonnet-4-20250514",
-        "max_tokens": 2000,
+        "max_tokens": 8000,
         "messages": [{
             "role": "user",
             "content": [
                 {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64}},
-                {"type": "text", "text": """Bu faturadan bilgileri çıkar. SADECE JSON döndür:
+                {"type": "text", "text": """Faturadaki TUM urunleri eksiksiz listele, hicbirini atlama. Shipping/handling satirini items'a ekleme. SADECE JSON dondur:
 {
   "invoice_no": "1013",
   "supplier": "VAV New York LLC",
@@ -563,7 +563,7 @@ async def handle_pdf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             fix_payload = json.dumps({
                 "model": "claude-sonnet-4-20250514",
-                "max_tokens": 2000,
+                "max_tokens": 4000,
                 "messages": [{"role": "user", "content": f"Bu JSON'u düzelt, SADECE geçerli JSON döndür:\n{raw[:3000]}"}]
             }).encode()
             fix_req = urllib.request.Request(
