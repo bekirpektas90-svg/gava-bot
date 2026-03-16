@@ -145,17 +145,21 @@ def db_save_invoice(invoice_no, supplier, date, total, items):
     return row['id']
 
 def db_save_variants(invoice_id, sku, variants, retail_price):
+    db_save_variants_named(invoice_id, sku, variants, retail_price, None)
+
+def db_save_variants_named(invoice_id, sku, variants, retail_price, product_name=None):
     conn = get_db()
     if not conn:
         return
     p = PRODUCTS.get(sku, {"name": sku, "cost": 0})
+    name = product_name or p['name']
     with conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM inventory WHERE sku=%s", (sku,))
             for v in variants:
                 cur.execute(
                     "INSERT INTO inventory (invoice_id, sku, product_name, color, size, qty, cost, retail_price) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (invoice_id, sku, p['name'], v['color'], v['size'], v['qty'], p['cost'], retail_price)
+                    (invoice_id, sku, name, v['color'], v['size'], v['qty'], p['cost'], retail_price)
                 )
     conn.close()
 
@@ -247,22 +251,30 @@ SADECE JSON döndür:
     return json.loads(raw)
 
 def parse_delivery_with_claude(text):
-    system = """Sen bir moda perakende stok yönetim asistanısın.
-Kullanıcı Türkçe serbest formatta ürün teslim bilgisi girer, sen JSON'a çevirirsin.
+    system = """Sen bir moda perakende stok yönetim asistanısın. Her girdi Türkçe olacak, her çıktı İngilizce olmalı.
 
-Renk kodları: siyah→BLK, beyaz→WHT, kırmızı→RED, mavi→BLUE, lacivert→NAVY,
-bej/bege→BEIGE, yeşil→GREEN, pembe→PINK, gri→GREY, kahve→BROWN,
-sarı→YELLOW, mor→PURPLE, turuncu→ORANGE, krem→CREAM, camel→CAMEL, multi→MULTI
+RENK KODLARI (Türkçe → kısa kod):
+siyah→BLK, beyaz→WHT, kırmızı→RED, mavi→BLU, lacivert→NVY, bej/bege→BGE,
+yeşil→GRN, pembe→PNK, gri→GRY, kahve→BRN, sarı→YLW, mor→PRP,
+turuncu→ORG, krem→CRM, ekru→ECR, camel→CML, multi/çok renkli→MLT,
+leopar→LEO, çiçekli print→FLR, çizgili→STR, kareli→PLD
 
-Beden dağılımı:
-- "2s2m2l" = asorti oran. Renk adedi ÷ beden sayısı = her bedenden kaç adet
-  Örnek: 6mavi 2s2m2l → BLUE: 2S,2M,2L | 3siyah 2s2m2l → BLK: 1S,1M,1L
-- "one size" / "tek beden" → OS
-- "S/M" → S ve M eşit bölünür | "L/XL" → L ve XL eşit bölünür
-- Beden yoksa → OS
+BEDEN DAĞILIMI:
+- "2s2m2l" = asorti oran, renk adedi beden sayısına bölünür
+  Örnek: 6mavi 2s2m2l → BLU:2S,2M,2L | 3siyah 2s2m2l → BLK:1S,1M,1L
+- "one size" / "tek beden" / beden yok → OS
+- "S/M" → S ve M eşit bölünür | "L/XL" → L ve XL eşit
+- Sayısal bedenler (27,28,29,30) olduğu gibi bırak
+
+ÜRÜN ADI ÇEVİRİSİ - Türkçe açıklamayı İngilizce ürün adına çevir:
+nakışlı→Embroidery, çizgili→Striped, keten→Linen, örme/örgü→Knit,
+baskılı→Printed, dantel→Lace, kadife→Velvet, denim→Denim, çiçekli→Floral,
+düz renk→Solid, saten→Satin, şifon→Chiffon, fitilli→Ribbed, tığ işi/kroşe→Crochet,
+elbise→Dress, bluz→Blouse, pantolon→Pants, şort→Shorts, etek→Skirt,
+hırka→Cardigan, yelek→Vest, üst/top→Top, takım→Set, kazak→Sweater, palto→Coat
 
 SADECE JSON döndür:
-[{"sku":"1308","retail_price":24.00,"variants":[{"color":"BLK","size":"S","qty":1}]}]"""
+[{"sku":"1308","product_name":"Embroidery Dress","retail_price":24.00,"variants":[{"color":"BLK","size":"S","qty":1}]}]"""
     raw = call_claude(text, system)
     return json.loads(raw)
 
@@ -362,10 +374,10 @@ async def menu_invoices(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
     keyboard = []
     for inv in invoices[:5]:
-        keyboard.append([InlineKeyboardButton(
-            f"#{inv['invoice_no']} — {inv['supplier']}",
-            callback_data=f"inv_detail_{inv['id']}"
-        )])
+        keyboard.append([
+            InlineKeyboardButton(f"#{inv['invoice_no']} — {inv['supplier']}", callback_data=f"inv_detail_{inv['id']}"),
+            InlineKeyboardButton("🗑", callback_data=f"inv_delete_{inv['id']}")
+        ])
     keyboard.append([InlineKeyboardButton("🏠 Ana Menü", callback_data="menu_main")])
     await query.edit_message_text(
         "\n".join(lines),
@@ -652,8 +664,13 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             p = PRODUCTS.get(sku, {"name": sku, "type":"Other","cost":0})
             if retail == 0:
                 retail = round(p['cost'] * 2.5, 2)
+            # Use Claude's translated product name if provided
+            claude_name = item.get("product_name")
+            if claude_name:
+                p = dict(p)
+                p['name'] = claude_name
             if HAS_DB and DATABASE_URL:
-                db_save_variants(None, sku, variants, retail)
+                db_save_variants_named(None, sku, variants, retail, p['name'])
             else:
                 sess = mem_sessions.setdefault(cid, {})
                 existing = sess.get(sku, {"variants":[], "retail_price": retail})
@@ -692,6 +709,49 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu_keyboard()
         )
 
+async def invoice_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    inv_id = int(query.data.split("_")[-1])
+    conn = get_db()
+    if not conn:
+        await query.edit_message_text("DB bağlantısı yok.", reply_markup=back_keyboard())
+        return
+    with conn.cursor() as cur:
+        cur.execute("SELECT invoice_no, supplier FROM invoices WHERE id=%s", (inv_id,))
+        row = cur.fetchone()
+    conn.close()
+    if not row:
+        await query.edit_message_text("Invoice bulunamadı.", reply_markup=back_keyboard())
+        return
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🗑 Evet, sil", callback_data=f"inv_confirm_delete_{inv_id}"),
+        InlineKeyboardButton("İptal", callback_data="menu_invoices")
+    ]])
+    await query.edit_message_text(
+        f"⚠️ *Invoice #{row['invoice_no']}* ({row['supplier']}) silinsin mi?\n"
+        f"Bu işlem geri alınamaz.",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
+async def invoice_confirm_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    inv_id = int(query.data.split("_")[-1])
+    conn = get_db()
+    if not conn:
+        await query.edit_message_text("DB bağlantısı yok.", reply_markup=back_keyboard())
+        return
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM invoices WHERE id=%s", (inv_id,))
+    conn.close()
+    await query.edit_message_text(
+        "✅ Invoice silindi.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📋 Invoice Listesi", callback_data="menu_invoices"), InlineKeyboardButton("🏠 Ana Menü", callback_data="menu_main")]])
+    )
+
 async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -712,6 +772,10 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await export_csv(update, ctx, "square")
     elif data.startswith("inv_detail_"):
         await invoice_detail(update, ctx)
+    elif data.startswith("inv_delete_"):
+        await invoice_delete(update, ctx)
+    elif data.startswith("inv_confirm_delete_"):
+        await invoice_confirm_delete(update, ctx)
 
 async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     inv_count = len(db_get_invoices()) if HAS_DB and DATABASE_URL else 0
