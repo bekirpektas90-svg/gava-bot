@@ -678,10 +678,11 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 if conn_check:
                     with conn_check.cursor() as cur:
                         cur.execute("""
-                            SELECT i.qty as invoice_qty FROM invoices inv
-                            JOIN LATERAL jsonb_array_elements(inv.items) AS i ON true
-                            WHERE i->>'sku' = %s
-                            ORDER BY inv.created_at DESC LIMIT 1
+                            SELECT (item->>'qty')::int as invoice_qty
+                            FROM invoices,
+                            jsonb_array_elements(items) AS item
+                            WHERE item->>'sku' = %s
+                            ORDER BY created_at DESC LIMIT 1
                         """, (sku,))
                         inv_row = cur.fetchone()
                     conn_check.close()
