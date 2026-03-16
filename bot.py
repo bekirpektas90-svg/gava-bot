@@ -16,6 +16,9 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 GOOGLE_DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
 GOOGLE_SERVICE_ACCOUNT = os.environ.get("GOOGLE_SERVICE_ACCOUNT", "")
 IMGUR_CLIENT_ID = os.environ.get("IMGUR_CLIENT_ID", "")
+CLOUDINARY_CLOUD_NAME = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
+CLOUDINARY_API_KEY = os.environ.get("CLOUDINARY_API_KEY", "")
+CLOUDINARY_API_SECRET = os.environ.get("CLOUDINARY_API_SECRET", "")
 
 def upload_image(filename, file_bytes):
     import hashlib, time
