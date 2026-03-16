@@ -941,6 +941,14 @@ def main():
         print("Veritabani baslatildi")
     else:
         print("Veritabani yok, gecici hafiza")
+    # Conflict onlemek icin webhook temizle
+    try:
+        import urllib.request as _ur
+        _url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
+        with _ur.urlopen(_url, timeout=10) as _r:
+            print("Webhook temizlendi:", _r.read().decode())
+    except Exception as _e:
+        print(f"Webhook temizleme hatasi: {_e}")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("menu", cmd_menu))
